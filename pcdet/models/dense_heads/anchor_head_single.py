@@ -40,7 +40,7 @@ class AnchorHeadSingle(AnchorHeadTemplate):
 
     def forward(self, data_dict):
         spatial_features_2d = data_dict['spatial_features_2d']
-
+        # => 将输入分别送入 conv_cls、conv_box、conv_dir_cls
         cls_preds = self.conv_cls(spatial_features_2d)
         box_preds = self.conv_box(spatial_features_2d)
 
@@ -56,7 +56,7 @@ class AnchorHeadSingle(AnchorHeadTemplate):
             self.forward_ret_dict['dir_cls_preds'] = dir_cls_preds
         else:
             dir_cls_preds = None
-
+        # => 进行target assigns
         if self.training:
             targets_dict = self.assign_targets(
                 gt_boxes=data_dict['gt_boxes']

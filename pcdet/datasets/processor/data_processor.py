@@ -53,7 +53,7 @@ class DataProcessor(object):
                 max_num_points=config.MAX_POINTS_PER_VOXEL,
                 max_voxels=config.MAX_NUMBER_OF_VOXELS[self.mode]
             )
-            grid_size = (self.point_cloud_range[3:6] - self.point_cloud_range[0:3]) / np.array(config.VOXEL_SIZE)
+            grid_size = (self.point_cloud_range[3:6] - self.point_cloud_range[0:3]) / np.array(config.VOXEL_SIZE)  # 网格尺寸即每个维度有多个voxel
             self.grid_size = np.round(grid_size).astype(np.int64)
             self.voxel_size = config.VOXEL_SIZE
             return partial(self.transform_points_to_voxels, voxel_generator=voxel_generator)
@@ -71,7 +71,7 @@ class DataProcessor(object):
 
         data_dict['voxels'] = voxels
         data_dict['voxel_coords'] = coordinates
-        data_dict['voxel_num_points'] = num_points
+        data_dict['voxel_num_points'] = num_points  # 每个体素多少点
         return data_dict
 
     def sample_points(self, data_dict=None, config=None):

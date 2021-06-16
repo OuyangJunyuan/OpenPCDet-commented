@@ -18,10 +18,14 @@ class Detector3DTemplate(nn.Module):
         self.dataset = dataset
         self.class_names = dataset.class_names
         self.register_buffer('global_step', torch.LongTensor(1).zero_())
-
+        # => 作者总结当前3D检测网络结构，认为大网络可以分成以下网络模块作为其拓扑结构，每个模块有较独立功能
+        # => 这些独立功能在不同检测网络中有不同方法实现。作者将这些子网络模块与检测网络一样也给出了各自的模板
+        # => 继承模板编写代码，就可以自己按自己的算法实现子模块功能。
+        # => 将自己定义模块实现加入到__all__中。
+        # => 通过配置文件配置网络结构与子模块参数，通过反射机制选取对应名称的子模块来连接成检测网络。
         self.module_topology = [
             'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
-            'backbone_2d', 'dense_head',  'point_head', 'roi_head'
+            'backbone_2d', 'dense_head', 'point_head', 'roi_head'
         ]
 
     @property
@@ -34,12 +38,17 @@ class Detector3DTemplate(nn.Module):
     def build_networks(self):
         model_info_dict = {
             'module_list': [],
+            # => kitti_dataset.yaml:POINT_FEATURE_ENCODING.used_feature_list的长度为num_point_features
             'num_rawpoint_features': self.dataset.point_feature_encoder.num_point_features,
             'num_point_features': self.dataset.point_feature_encoder.num_point_features,
+            # => 表示空间网格的数量，POINT_CLOUD_RANGE/voxel_size
             'grid_size': self.dataset.grid_size,
+            # => kitti_dataset.yaml:POINT_CLOUD_RANGE
             'point_cloud_range': self.dataset.point_cloud_range,
+            # => kitti_dataset.yaml:DATA_PROCESSOR.VOXEL_SIZE
             'voxel_size': self.dataset.voxel_size
         }
+        # => 依次调用module_topology中的结构的构造函数来构建各个模块
         for module_name in self.module_topology:
             module, model_info_dict = getattr(self, 'build_%s' % module_name)(
                 model_info_dict=model_info_dict
@@ -50,7 +59,8 @@ class Detector3DTemplate(nn.Module):
     def build_vfe(self, model_info_dict):
         if self.model_cfg.get('VFE', None) is None:
             return None, model_info_dict
-
+        # => VFE正如其名是体素特征提取的模块,
+        # => 作者将所有的网络构造都采用这样的形式，即通过配置文件写名字。按照名字在模型名列表中反射调用其构造函数。
         vfe_module = vfe.__all__[self.model_cfg.VFE.NAME](
             model_cfg=self.model_cfg.VFE,
             num_point_features=model_info_dict['num_rawpoint_features'],
@@ -119,9 +129,10 @@ class Detector3DTemplate(nn.Module):
     def build_dense_head(self, model_info_dict):
         if self.model_cfg.get('DENSE_HEAD', None) is None:
             return None, model_info_dict
+        # 输入
         dense_head_module = dense_heads.__all__[self.model_cfg.DENSE_HEAD.NAME](
             model_cfg=self.model_cfg.DENSE_HEAD,
-            input_channels=model_info_dict['num_bev_features'],
+            input_channels=model_info_dict['num_bev_features'],  # =>从bev的feature map中得到proposal
             num_class=self.num_class if not self.model_cfg.DENSE_HEAD.CLASS_AGNOSTIC else 1,
             class_names=self.class_names,
             grid_size=model_info_dict['grid_size'],

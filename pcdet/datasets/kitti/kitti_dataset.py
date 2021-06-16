@@ -51,7 +51,8 @@ class KittiDataset(DatasetTemplate):
 
     def set_split(self, split):
         super().__init__(
-            dataset_cfg=self.dataset_cfg, class_names=self.class_names, training=self.training, root_path=self.root_path, logger=self.logger
+            dataset_cfg=self.dataset_cfg, class_names=self.class_names, training=self.training,
+            root_path=self.root_path, logger=self.logger
         )
         self.split = split
         self.root_split_path = self.root_path / ('training' if self.split != 'test' else 'testing')
@@ -154,33 +155,36 @@ class KittiDataset(DatasetTemplate):
 
                 num_objects = len([obj.cls_type for obj in obj_list if obj.cls_type != 'DontCare'])
                 num_gt = len(annotations['name'])
+                # inddex中有num_gt个。前num_objects个表示非DontCare的物体索引，其他后续的num_objects的最后一个。
                 index = list(range(num_objects)) + [-1] * (num_gt - num_objects)
                 annotations['index'] = np.array(index, dtype=np.int32)
 
                 loc = annotations['location'][:num_objects]
                 dims = annotations['dimensions'][:num_objects]
                 rots = annotations['rotation_y'][:num_objects]
-                loc_lidar = calib.rect_to_lidar(loc)
-                l, h, w = dims[:, 0:1], dims[:, 1:2], dims[:, 2:3]
-                loc_lidar[:, 2] += h[:, 0] / 2
+                loc_lidar = calib.rect_to_lidar(loc)  # 从相机坐标系转到雷达坐标系
+                l, h, w = dims[:, 0:1], dims[:, 1:2], dims[:, 2:3]  # 下面三行是把gt_box转到雷达坐标系下
+                loc_lidar[:, 2] += h[:, 0] / 2  # 因为3dbox是以底面中心为loc的，转换为以体心为loc
                 gt_boxes_lidar = np.concatenate([loc_lidar, l, w, h, -(np.pi / 2 + rots[..., np.newaxis])], axis=1)
                 annotations['gt_boxes_lidar'] = gt_boxes_lidar
 
                 info['annos'] = annotations
 
                 if count_inside_pts:
-                    points = self.get_lidar(sample_idx)
+                    points = self.get_lidar(sample_idx)  # 读取velodyne/sample_idx.bin 得到[n,4]
                     calib = self.get_calib(sample_idx)
-                    pts_rect = calib.lidar_to_rect(points[:, 0:3])
+                    pts_rect = calib.lidar_to_rect(points[:, 0:3])  # 相机坐标系下的点云
 
+                    # 对相机坐标下的点云，通过img_shape和内外参。得到相机视野内的点云的bool array做作为flag
+                    # flag包括在 中野中且深度>0的点云
                     fov_flag = self.get_fov_flag(pts_rect, info['image']['image_shape'], calib)
-                    pts_fov = points[fov_flag]
-                    corners_lidar = box_utils.boxes_to_corners_3d(gt_boxes_lidar)
-                    num_points_in_gt = -np.ones(num_gt, dtype=np.int32)
+                    pts_fov = points[fov_flag]  # 提取得到视野内深度>0的相机坐标系点云。
+                    corners_lidar = box_utils.boxes_to_corners_3d(gt_boxes_lidar)  # bbox的8个角点
+                    num_points_in_gt = -np.ones(num_gt, dtype=np.int32)  # [num_get,1] 个0，初始化box内的点云数量
 
                     for k in range(num_objects):
-                        flag = box_utils.in_hull(pts_fov[:, 0:3], corners_lidar[k])
-                        num_points_in_gt[k] = flag.sum()
+                        flag = box_utils.in_hull(pts_fov[:, 0:3], corners_lidar[k])  # 统计点是否在fov中在第i个gt_box内
+                        num_points_in_gt[k] = flag.sum()  # 计数
                     annotations['num_points_in_gt'] = num_points_in_gt
 
             return info
@@ -214,7 +218,7 @@ class KittiDataset(DatasetTemplate):
             gt_boxes = annos['gt_boxes_lidar']
 
             num_obj = gt_boxes.shape[0]
-            point_indices = roiaware_pool3d_utils.points_in_boxes_cpu(
+            point_indices = roiaware_pool3d_utils.points_in_boxes_cpu(  # 读取在gt_box内的点云
                 torch.from_numpy(points[:, 0:3]), torch.from_numpy(gt_boxes)
             ).numpy()  # (nboxes, npoints)
 
@@ -246,7 +250,7 @@ class KittiDataset(DatasetTemplate):
     def generate_prediction_dicts(batch_dict, pred_dicts, class_names, output_path=None):
         """
         Args:
-            batch_dict:
+            batch_dict:  # dict of original data from the dataloader
                 frame_id:
             pred_dicts: list of pred_dicts
                 pred_boxes: (N, 7), Tensor
@@ -258,6 +262,7 @@ class KittiDataset(DatasetTemplate):
         Returns:
 
         """
+
         def get_template_prediction(num_samples):
             ret_dict = {
                 'name': np.zeros(num_samples), 'truncated': np.zeros(num_samples),
@@ -350,7 +355,7 @@ class KittiDataset(DatasetTemplate):
         calib = self.get_calib(sample_idx)
 
         img_shape = info['image']['image_shape']
-        if self.dataset_cfg.FOV_POINTS_ONLY:
+        if self.dataset_cfg.FOV_POINTS_ONLY:  # 总要的地方，可以关闭以使用360°点云
             pts_rect = calib.lidar_to_rect(points[:, 0:3])
             fov_flag = self.get_fov_flag(pts_rect, img_shape, calib)
             points = points[fov_flag]
@@ -366,6 +371,7 @@ class KittiDataset(DatasetTemplate):
             annos = common_utils.drop_info_with_name(annos, name='DontCare')
             loc, dims, rots = annos['location'], annos['dimensions'], annos['rotation_y']
             gt_names = annos['name']
+            # ? 为啥要用原始数据在这里自己再转一次？在做数据集的数据库时已经存好gt_box_lidar了吗叫'annos'：'gt_boxes_lidar' 也是雷达系下的
             gt_boxes_camera = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1).astype(np.float32)
             gt_boxes_lidar = box_utils.boxes3d_kitti_camera_to_lidar(gt_boxes_camera, calib)
 
@@ -425,10 +431,12 @@ def create_kitti_infos(dataset_cfg, class_names, data_path, save_path, workers=4
 
 if __name__ == '__main__':
     import sys
+
     if sys.argv.__len__() > 1 and sys.argv[1] == 'create_kitti_infos':
         import yaml
         from pathlib import Path
         from easydict import EasyDict
+
         dataset_cfg = EasyDict(yaml.load(open(sys.argv[2])))
         ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
         create_kitti_infos(

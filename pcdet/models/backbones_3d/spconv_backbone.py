@@ -69,11 +69,13 @@ class VoxelBackBone8x(nn.Module):
     def __init__(self, model_cfg, input_channels, grid_size, **kwargs):
         super().__init__()
         self.model_cfg = model_cfg
+        # => eps加在分母上，防止除以很小的数，数值不稳定。momentum是更新策略，考虑历史值，新值=历史值×0.99+当前值*0.01
         norm_fn = partial(nn.BatchNorm1d, eps=1e-3, momentum=0.01)
 
         self.sparse_shape = grid_size[::-1] + [1, 0, 0]
 
         self.conv_input = spconv.SparseSequential(
+            # => 这里SubMConv3d就是稀疏卷积，而SparseConv3d可能就是指普通的3d卷积。
             spconv.SubMConv3d(input_channels, 16, 3, padding=1, bias=False, indice_key='subm1'),
             norm_fn(16),
             nn.ReLU(),
@@ -83,21 +85,21 @@ class VoxelBackBone8x(nn.Module):
         self.conv1 = spconv.SparseSequential(
             block(16, 16, 3, norm_fn=norm_fn, padding=1, indice_key='subm1'),
         )
-
+        # => x2
         self.conv2 = spconv.SparseSequential(
             # [1600, 1408, 41] <- [800, 704, 21]
             block(16, 32, 3, norm_fn=norm_fn, stride=2, padding=1, indice_key='spconv2', conv_type='spconv'),
             block(32, 32, 3, norm_fn=norm_fn, padding=1, indice_key='subm2'),
             block(32, 32, 3, norm_fn=norm_fn, padding=1, indice_key='subm2'),
         )
-
+        # => x2
         self.conv3 = spconv.SparseSequential(
             # [800, 704, 21] <- [400, 352, 11]
             block(32, 64, 3, norm_fn=norm_fn, stride=2, padding=1, indice_key='spconv3', conv_type='spconv'),
             block(64, 64, 3, norm_fn=norm_fn, padding=1, indice_key='subm3'),
             block(64, 64, 3, norm_fn=norm_fn, padding=1, indice_key='subm3'),
         )
-
+        # => x2
         self.conv4 = spconv.SparseSequential(
             # [400, 352, 11] <- [200, 176, 5]
             block(64, 64, 3, norm_fn=norm_fn, stride=2, padding=(0, 1, 1), indice_key='spconv4', conv_type='spconv'),
@@ -108,7 +110,7 @@ class VoxelBackBone8x(nn.Module):
         last_pad = 0
         last_pad = self.model_cfg.get('last_pad', last_pad)
         self.conv_out = spconv.SparseSequential(
-            # [200, 150, 5] -> [200, 150, 2]
+            # [200, 150, 5] -> [200, 150, 2]num_point_features
             spconv.SparseConv3d(64, 128, (3, 1, 1), stride=(2, 1, 1), padding=last_pad,
                                 bias=False, indice_key='spconv_down2'),
             norm_fn(128),
@@ -125,10 +127,11 @@ class VoxelBackBone8x(nn.Module):
                 voxel_coords: (num_voxels, 4), [batch_idx, z_idx, y_idx, x_idx]
         Returns:
             batch_dict:
-                encoded_spconv_tensor: sparse tensor
+                encoded_spconvstride_tensor: sparse tensor
         """
         voxel_features, voxel_coords = batch_dict['voxel_features'], batch_dict['voxel_coords']
         batch_size = batch_dict['batch_size']
+        # => 转换成spconv库的输入类型
         input_sp_tensor = spconv.SparseConvTensor(
             features=voxel_features,
             indices=voxel_coords.int(),
@@ -151,6 +154,7 @@ class VoxelBackBone8x(nn.Module):
             'encoded_spconv_tensor': out,
             'encoded_spconv_tensor_stride': 8
         })
+        # => 保存feature volume到输出字典中
         batch_dict.update({
             'multi_scale_3d_features': {
                 'x_conv1': x_conv1,

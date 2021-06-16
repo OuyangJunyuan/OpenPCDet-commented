@@ -44,9 +44,11 @@ def parse_config():
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
 
     args = parser.parse_args()
-
-    cfg_from_yaml_file(args.cfg_file, cfg)
-    cfg.TAG = Path(args.cfg_file).stem
+    # 通过在 kitti_models/pv_rcnn.yaml 指定_BASE_CONFIG_
+    # DATA_CONFIG: _BASE_CONFIG_: cfgs/dataset_configs/kitti_dataset.yaml
+    # 将kitti_dataset中数据集信息按字典导入到config.DATA_CONFIG下
+    cfg_from_yaml_file(args.cfg_file, cfg)  # cfg_file = cfgs/kitti_models/pv_rcnn.yaml
+    cfg.TAG = Path(args.cfg_file).stem  # pvrcnn  .stem用获取路径最后一个成员并且去掉它的后缀。
     cfg.EXP_GROUP_PATH = '/'.join(args.cfg_file.split('/')[1:-1])  # remove 'cfgs' and 'xxxx.yaml'
 
     if args.set_cfgs is not None:
@@ -58,7 +60,7 @@ def parse_config():
 def main():
     args, cfg = parse_config()
     if args.launcher == 'none':
-        dist_train = False
+        dist_train = False  # 分布式训练dist_train？多GPU
         total_gpus = 1
     else:
         total_gpus, cfg.LOCAL_RANK = getattr(common_utils, 'init_dist_%s' % args.launcher)(
@@ -67,26 +69,29 @@ def main():
         dist_train = True
 
     if args.batch_size is None:
-        args.batch_size = cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU
+        args.batch_size = cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU # 2
     else:
         assert args.batch_size % total_gpus == 0, 'Batch size should match the number of gpus'
         args.batch_size = args.batch_size // total_gpus
 
+    # cfg.OPTIMIZATION.NUM_EPOCHS 默认80
     args.epochs = cfg.OPTIMIZATION.NUM_EPOCHS if args.epochs is None else args.epochs
 
     if args.fix_random_seed:
         common_utils.set_random_seed(666)
-
+    # /home/ou/workspace/code/OpenPCDet/output/kitti_models/pv_rcnn/default
     output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
+    # /home/ou/workspace/code/OpenPCDet/output/kitti_models/pv_rcnn/default/ckpt_dir
     ckpt_dir = output_dir / 'ckpt'
     output_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-
+    # /home/ou/workspace/code/OpenPCDet/output/kitti_models/pv_rcnn/default/log_train_日期.txt
     log_file = output_dir / ('log_train_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
     logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
 
     # log to file
     logger.info('**********************Start logging**********************')
+    # gpu_list = all
     gpu_list = os.environ['CUDA_VISIBLE_DEVICES'] if 'CUDA_VISIBLE_DEVICES' in os.environ.keys() else 'ALL'
     logger.info('CUDA_VISIBLE_DEVICES=%s' % gpu_list)
 
@@ -101,15 +106,16 @@ def main():
     tb_log = SummaryWriter(log_dir=str(output_dir / 'tensorboard')) if cfg.LOCAL_RANK == 0 else None
 
     # -----------------------create dataloader & network & optimizer---------------------------
+    # 按cfg.DATA_CONFIG.DATASET的名字在字典内查到对应的类来反射得到对应的数据集，这里调用KittiDataset.
     train_set, train_loader, train_sampler = build_dataloader(
-        dataset_cfg=cfg.DATA_CONFIG,
-        class_names=cfg.CLASS_NAMES,
-        batch_size=args.batch_size,
-        dist=dist_train, workers=args.workers,
+        dataset_cfg=cfg.DATA_CONFIG,  #
+        class_names=cfg.CLASS_NAMES,  # ['Car', 'Pedestrian', 'Cyclist']
+        batch_size=args.batch_size,  # 2
+        dist=dist_train, workers=args.workers,  # false , 8
         logger=logger,
         training=True,
-        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
-        total_epochs=args.epochs
+        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,  # false
+        total_epochs=args.epochs  # 80
     )
 
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=train_set)

@@ -162,6 +162,12 @@ class DatasetTemplate(torch_data.Dataset):
                     ret[key] = np.concatenate(val, axis=0)
                 elif key in ['points', 'voxel_coords']:
                     coors = []
+                    # => 表示在每个元素前增加一位i表示是batch内第几个dataset的点,[16000,3]=>[16000,4]
+                    # [0,x_1,y_1,z_1]
+                    # ...
+                    # [0,x_16000,y_16000,z_16000]
+                    # [1,x_1,y_1,z_1]
+                    # ...
                     for i, coor in enumerate(val):
                         coor_pad = np.pad(coor, ((0, 0), (1, 0)), mode='constant', constant_values=i)
                         coors.append(coor_pad)

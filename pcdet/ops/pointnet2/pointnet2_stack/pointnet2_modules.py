@@ -25,15 +25,18 @@ class StackSAModuleMSG(nn.Module):
 
         self.groupers = nn.ModuleList()
         self.mlps = nn.ModuleList()
+        # =>构建每个尺度SA : sampling & grouping & pointnet
         for i in range(len(radii)):
             radius = radii[i]
             nsample = nsamples[i]
+            # => MSG的不同尺度grouping
             self.groupers.append(pointnet2_utils.QueryAndGroup(radius, nsample, use_xyz=use_xyz))
             mlp_spec = mlps[i]
             if use_xyz:
                 mlp_spec[0] += 3
-
+            # => shared_mlps = conv2d
             shared_mlps = []
+            # => [16, 16, 16]为两层mlp
             for k in range(len(mlp_spec) - 1):
                 shared_mlps.extend([
                     nn.Conv2d(mlp_spec[k], mlp_spec[k + 1], kernel_size=1, bias=False),
@@ -71,6 +74,7 @@ class StackSAModuleMSG(nn.Module):
             new_features, ball_idxs = self.groupers[k](
                 xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt, features
             )  # (M1 + M2, C, nsample)
+            # mlps是按conv2d实现的，conv2d输入为(B,C,H,W)
             new_features = new_features.permute(1, 0, 2).unsqueeze(dim=0)  # (1, C, M1 + M2 ..., nsample)
             new_features = self.mlps[k](new_features)  # (1, C, M1 + M2 ..., nsample)
 

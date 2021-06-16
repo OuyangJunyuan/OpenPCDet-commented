@@ -4,12 +4,14 @@ from .detector3d_template import Detector3DTemplate
 class PVRCNN(Detector3DTemplate):
     def __init__(self, model_cfg, num_class, dataset):
         super().__init__(model_cfg=model_cfg, num_class=num_class, dataset=dataset)
+        # => 基类函数，读取配置文件，构建网络
         self.module_list = self.build_networks()
 
     def forward(self, batch_dict):
         for cur_module in self.module_list:
             batch_dict = cur_module(batch_dict)
-
+        # 'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
+        # 'backbone_2d', 'dense_head', 'point_head', 'roi_head'
         if self.training:
             loss, tb_dict, disp_dict = self.get_training_loss()
 

@@ -35,7 +35,7 @@ class DataBaseSampler(object):
             self.sample_class_num[class_name] = sample_num
             self.sample_groups[class_name] = {
                 'sample_num': sample_num,
-                'pointer': len(self.db_infos[class_name]),
+                'pointer': len(self.db_infos[class_name]),  # pointer 指向db_infos[cls]的某个位置，作为采样起始点。
                 'indices': np.arange(len(self.db_infos[class_name]))
             }
 
@@ -86,11 +86,11 @@ class DataBaseSampler(object):
         """
         sample_num, pointer, indices = int(sample_group['sample_num']), sample_group['pointer'], sample_group['indices']
         if pointer >= len(self.db_infos[class_name]):
-            indices = np.random.permutation(len(self.db_infos[class_name]))
+            indices = np.random.permutation(len(self.db_infos[class_name]))  # 随机排列[0,i)
             pointer = 0
 
         sampled_dict = [self.db_infos[class_name][idx] for idx in indices[pointer: pointer + sample_num]]
-        pointer += sample_num
+        pointer += sample_num  # 后移
         sample_group['pointer'] = pointer
         sample_group['indices'] = indices
         return sampled_dict
@@ -129,7 +129,7 @@ class DataBaseSampler(object):
 
         obj_points_list = []
         for idx, info in enumerate(total_valid_sampled_dict):
-            file_path = self.root_path / info['path']
+            file_path = self.root_path / info['path']  # gt_database/xxxxx.bin
             obj_points = np.fromfile(str(file_path), dtype=np.float32).reshape(
                 [-1, self.sampler_cfg.NUM_POINT_FEATURES])
 
@@ -170,11 +170,12 @@ class DataBaseSampler(object):
         existed_boxes = gt_boxes
         total_valid_sampled_dict = []
         for class_name, sample_group in self.sample_groups.items():
-            if self.limit_whole_scene:
-                num_gt = np.sum(class_name == gt_names)
-                sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)
-            if int(sample_group['sample_num']) > 0:
-                sampled_dict = self.sample_with_fixed_number(class_name, sample_group)
+            if self.limit_whole_scene:  # 如果设置了limit_whole_scene 则
+                num_gt = np.sum(class_name == gt_names)  # gt_box列表中本类有num_gt个 gt
+                sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)  # 只需要再采样sample_num个
+            if int(sample_group['sample_num']) > 0:  # 如果 self.limit_whole_scene 为true则有可能sample_num为负表示不需要采样了
+                sampled_dict = self.sample_with_fixed_number(class_name,
+                                                             sample_group)  # [db_infos[class_name][idx],...]
 
                 sampled_boxes = np.stack([x['box3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
 
@@ -183,7 +184,7 @@ class DataBaseSampler(object):
 
                 iou1 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], existed_boxes[:, 0:7])
                 iou2 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], sampled_boxes[:, 0:7])
-                iou2[range(sampled_boxes.shape[0]), range(sampled_boxes.shape[0])] = 0
+                iou2[range(sampled_boxes.shape[0]), range(sampled_boxes.shape[0])] = 0  # 对角线为0
                 iou1 = iou1 if iou1.shape[1] > 0 else iou2
                 valid_mask = ((iou1.max(axis=1) + iou2.max(axis=1)) == 0).nonzero()[0]
                 valid_sampled_dict = [sampled_dict[x] for x in valid_mask]

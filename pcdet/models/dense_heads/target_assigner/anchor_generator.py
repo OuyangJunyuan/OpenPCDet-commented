@@ -20,7 +20,7 @@ class AnchorGenerator(object):
         num_anchors_per_location = []
         for grid_size, anchor_size, anchor_rotation, anchor_height, align_center in zip(
                 grid_sizes, self.anchor_sizes, self.anchor_rotations, self.anchor_heights, self.align_center):
-
+            # => pvrcnn:2x1x1
             num_anchors_per_location.append(len(anchor_rotation) * len(anchor_size) * len(anchor_height))
             if align_center:
                 x_stride = (self.anchor_range[3] - self.anchor_range[0]) / grid_size[0]
@@ -48,13 +48,15 @@ class AnchorGenerator(object):
             anchors = torch.stack((x_shifts, y_shifts, z_shifts), dim=-1)  # [x, y, z, 3]
             anchors = anchors[:, :, :, None, :].repeat(1, 1, 1, anchor_size.shape[0], 1)
             anchor_size = anchor_size.view(1, 1, 1, -1, 3).repeat([*anchors.shape[0:3], 1, 1])
-            anchors = torch.cat((anchors, anchor_size), dim=-1)
-            anchors = anchors[:, :, :, :, None, :].repeat(1, 1, 1, 1, num_anchor_rotation, 1)
-            anchor_rotation = anchor_rotation.view(1, 1, 1, 1, -1, 1).repeat([*anchors.shape[0:3], num_anchor_size, 1, 1])
+            anchors = torch.cat((anchors, anchor_size), dim=-1)  # [x, y, z,n, 6=xyzlwh]
+            anchors = anchors[:, :, :, :, None, :].repeat(1, 1, 1, 1, num_anchor_rotation, 1)  # [x, y, z, n,r,6=xyzlwh]
+            anchor_rotation = anchor_rotation.view(1, 1, 1, 1, -1, 1).repeat(
+                [*anchors.shape[0:3], num_anchor_size, 1, 1])  # [x, y, z, n, r, 1]
             anchors = torch.cat((anchors, anchor_rotation), dim=-1)  # [x, y, z, num_size, num_rot, 7]
 
             anchors = anchors.permute(2, 1, 0, 3, 4, 5).contiguous()
-            #anchors = anchors.view(-1, anchors.shape[-1])
+            # anchors = anchors.view(-1, anchors.shape[-1])
+            # bottom_height += anchor_size.z/2
             anchors[..., 2] += anchors[..., 5] / 2  # shift to box centers
             all_anchors.append(anchors)
         return all_anchors, num_anchors_per_location
@@ -62,6 +64,7 @@ class AnchorGenerator(object):
 
 if __name__ == '__main__':
     from easydict import EasyDict
+
     config = [
         EasyDict({
             'anchor_sizes': [[2.1, 4.7, 1.7], [0.86, 0.91, 1.73], [0.84, 1.78, 1.78]],
@@ -75,5 +78,6 @@ if __name__ == '__main__':
         anchor_generator_config=config
     )
     import pdb
+
     pdb.set_trace()
     A.generate_anchors([[188, 188]])

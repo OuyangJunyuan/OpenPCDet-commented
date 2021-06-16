@@ -50,6 +50,7 @@ class AxisAlignedTargetAssigner(object):
         gt_classes = gt_boxes_with_classes[:, :, -1]
         gt_boxes = gt_boxes_with_classes[:, :, :-1]
         for k in range(batch_size):
+            # => 得到本batch_idx的gt_box,gt_cls
             cur_gt = gt_boxes[k]
             cnt = cur_gt.__len__() - 1
             while cnt > 0 and cur_gt[cnt].sum() == 0:
@@ -59,11 +60,12 @@ class AxisAlignedTargetAssigner(object):
 
             target_list = []
             for anchor_class_name, anchors in zip(self.anchor_class_names, all_anchors):
+                # => 得到每个anchor_generate类别的anchor内容与类别
                 if cur_gt_classes.shape[0] > 1:
                     mask = torch.from_numpy(self.class_names[cur_gt_classes.cpu() - 1] == anchor_class_name)
                 else:
                     mask = torch.tensor([self.class_names[c - 1] == anchor_class_name
-                                         for c in cur_gt_classes], dtype=torch.bool)
+                                         for c in cur_gt_classes], dUSE_MULTIHEADtype=torch.bool)
 
                 if self.use_multihead:
                     anchors = anchors.permute(3, 4, 0, 1, 2, 5).contiguous().view(-1, anchors.shape[-1])
@@ -79,7 +81,7 @@ class AxisAlignedTargetAssigner(object):
                     feature_map_size = anchors.shape[:3]
                     anchors = anchors.view(-1, anchors.shape[-1])
                     selected_classes = cur_gt_classes[mask]
-
+                # => 对每个anchor_generate配置中anchor类别单独进行gtbox assign
                 single_target = self.assign_targets_single(
                     anchors,
                     cur_gt[mask],
@@ -133,31 +135,39 @@ class AxisAlignedTargetAssigner(object):
 
         num_anchors = anchors.shape[0]
         num_gt = gt_boxes.shape[0]
-
+        # => 每个anchor对应的gt_cls，-1表示gt_box这个anchor不配对
         labels = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1
+        # => 每个anchor对应哪个gt_boxes，-1表示gt_box这个anchor不配对
         gt_ids = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1
-
+        # => 若gtbox:(n_1,7)与anchors:(n_2,7)都非空
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
+            # => 求取这个类的gt_box与anchor的bev_iou或3d_iou
             anchor_by_gt_overlap = iou3d_nms_utils.boxes_iou3d_gpu(anchors[:, 0:7], gt_boxes[:, 0:7]) \
                 if self.match_height else box_utils.boxes3d_nearest_bev_iou(anchors[:, 0:7], gt_boxes[:, 0:7])
-
+            # => 求取这个类中所有anchors与哪个gt_boxes最匹配
             anchor_to_gt_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().numpy().argmax(axis=1)).cuda()
+            # => 求取这个类中所有anchors与哪个gt_boxes最匹配的iou
             anchor_to_gt_max = anchor_by_gt_overlap[
                 torch.arange(num_anchors, device=anchors.device), anchor_to_gt_argmax
             ]
-
+            # => 求取这个类中所有gt_boxes与哪个anchors最匹配的分数
             gt_to_anchor_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().numpy().argmax(axis=0)).cuda()
+            # => 求取这个类中所有gt_boxes与哪个anchors最匹配的分数的iou
             gt_to_anchor_max = anchor_by_gt_overlap[gt_to_anchor_argmax, torch.arange(num_gt, device=anchors.device)]
+
             empty_gt_mask = gt_to_anchor_max == 0
             gt_to_anchor_max[empty_gt_mask] = -1
-
+            # => anchors中哪个和gt有最大iou
             anchors_with_max_overlap = (anchor_by_gt_overlap == gt_to_anchor_max).nonzero()[:, 0]
             gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap]
             labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
             gt_ids[anchors_with_max_overlap] = gt_inds_force.int()
 
+            # => 判断每个anchor与最配对的gtbox之间iou是否大于阈值
             pos_inds = anchor_to_gt_max >= matched_threshold
+            # => 求大于阈值的anchor与哪个gt_box配对
             gt_inds_over_thresh = anchor_to_gt_argmax[pos_inds]
+            # => 对这些与gtbox匹配大于阈值的anchor也进行gt_cls和gt_box序号记录
             labels[pos_inds] = gt_classes[gt_inds_over_thresh]
             gt_ids[pos_inds] = gt_inds_over_thresh.int()
             bg_inds = (anchor_to_gt_max < unmatched_threshold).nonzero()[:, 0]

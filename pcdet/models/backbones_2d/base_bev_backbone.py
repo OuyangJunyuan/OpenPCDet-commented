@@ -7,7 +7,7 @@ class BaseBEVBackbone(nn.Module):
     def __init__(self, model_cfg, input_channels):
         super().__init__()
         self.model_cfg = model_cfg
-
+        # => 读取配置参数
         if self.model_cfg.get('LAYER_NUMS', None) is not None:
             assert len(self.model_cfg.LAYER_NUMS) == len(self.model_cfg.LAYER_STRIDES) == len(self.model_cfg.NUM_FILTERS)
             layer_nums = self.model_cfg.LAYER_NUMS
@@ -85,6 +85,7 @@ class BaseBEVBackbone(nn.Module):
                 spatial_features
         Returns:
         """
+        # =>（b,bev_feature_num,H,W)=(1, 256, 200, 200)
         spatial_features = data_dict['spatial_features']
         ups = []
         ret_dict = {}

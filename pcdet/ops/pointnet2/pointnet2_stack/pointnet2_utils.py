@@ -5,6 +5,7 @@ from torch.autograd import Function, Variable
 from . import pointnet2_stack_cuda as pointnet2
 
 
+# =>是FUnction，作者自己定义了一些算符，并实现其前向和后向
 class BallQuery(Function):
 
     @staticmethod
@@ -30,6 +31,7 @@ class BallQuery(Function):
 
         B = xyz_batch_cnt.shape[0]
         M = new_xyz.shape[0]
+        # => idx:(num_keypoints,nsample)
         idx = torch.cuda.IntTensor(M, nsample).zero_()
 
         pointnet2.ball_query_wrapper(B, M, radius, nsample, new_xyz, new_xyz_batch_cnt, xyz, xyz_batch_cnt, idx)
@@ -130,19 +132,24 @@ class QueryAndGroup(nn.Module):
         Returns:
             new_features: (M1 + M2, C, nsample) tensor
         """
-        assert xyz.shape[0] == xyz_batch_cnt.sum(), 'xyz: %s, xyz_batch_cnt: %s' % (str(xyz.shape), str(new_xyz_batch_cnt))
+        assert xyz.shape[0] == xyz_batch_cnt.sum(), 'xyz: %s, xyz_batch_cnt: %s' % (
+        str(xyz.shape), str(new_xyz_batch_cnt))
         assert new_xyz.shape[0] == new_xyz_batch_cnt.sum(), \
             'new_xyz: %s, new_xyz_batch_cnt: %s' % (str(new_xyz.shape), str(new_xyz_batch_cnt))
-
+        # 得到每个输出点（grouping中心）所对应nsample个采样点在原点集xyz中索引
         # idx: (M1 + M2 ..., nsample), empty_ball_mask: (M1 + M2 ...)
         idx, empty_ball_mask = ball_query(self.radius, self.nsample, xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt)
+        # 得到每个输出点（grouping中心）所对应nsample个采样点的坐标
         grouped_xyz = grouping_operation(xyz, xyz_batch_cnt, idx, new_xyz_batch_cnt)  # (M1 + M2, 3, nsample)
+        # grouped_xyz:(M1 + M2 ..., 3, nsample)
+        # new_xyz.unsqueeze(-1): (M1 + M2 ..., 3，1)
+        # 得到每个group内中心化坐标。
         grouped_xyz -= new_xyz.unsqueeze(-1)
-
         grouped_xyz[empty_ball_mask] = 0
 
         if features is not None:
-            grouped_features = grouping_operation(features, xyz_batch_cnt, idx, new_xyz_batch_cnt)  # (M1 + M2, C, nsample)
+            grouped_features = grouping_operation(features, xyz_batch_cnt, idx,
+                                                  new_xyz_batch_cnt)  # (M1 + M2, C, nsample)
             grouped_features[empty_ball_mask] = 0
             if self.use_xyz:
                 new_features = torch.cat([grouped_xyz, grouped_features], dim=1)  # (M1 + M2 ..., C + 3, nsample)
@@ -260,7 +267,6 @@ class ThreeInterpolate(Function):
 
 
 three_interpolate = ThreeInterpolate.apply
-
 
 if __name__ == '__main__':
     pass

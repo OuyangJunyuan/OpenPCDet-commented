@@ -40,6 +40,7 @@ class AnchorHeadTemplate(nn.Module):
             anchor_range=point_cloud_range,
             anchor_generator_config=anchor_generator_cfg
         )
+        # => x/8 y/8
         feature_map_size = [grid_size[:2] // config['feature_map_stride'] for config in anchor_generator_cfg]
         anchors_list, num_anchors_per_location_list = anchor_generator.generate_anchors(feature_map_size)
 

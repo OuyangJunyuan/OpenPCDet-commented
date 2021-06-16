@@ -54,13 +54,19 @@ class VoxelSetAbstraction(nn.Module):
         self.SA_layer_names = []
         self.downsample_times_map = {}
         c_in = 0
+        # => 对['bev', 'x_conv1', 'x_conv2', 'x_conv3', 'x_conv4', 'raw_points']特征源每个都进行SA
         for src_name in self.model_cfg.FEATURES_SOURCE:
+            # => 对conv1,conv2,conv3,conv4的feature map构建SA
             if src_name in ['bev', 'raw_points']:
                 continue
+            # => 读取并设置降采样倍率
             self.downsample_times_map[src_name] = SA_cfg[src_name].DOWNSAMPLE_FACTOR
             mlps = SA_cfg[src_name].MLPS
             for k in range(len(mlps)):
                 mlps[k] = [mlps[k][0]] + mlps[k]
+            # => 通过radii、nsample、mlps几个参数构建SA
+            # => MSG指SA为PointNet++中的Multi-scale grouping 方法
+            # => 用不同半径SA的PointNet特征cat在一起。用于解决点云密度分布不均匀的问题。
             cur_layer = pointnet2_stack_modules.StackSAModuleMSG(
                 radii=SA_cfg[src_name].POOL_RADIUS,
                 nsamples=SA_cfg[src_name].NSAMPLE,
@@ -70,7 +76,8 @@ class VoxelSetAbstraction(nn.Module):
             )
             self.SA_layers.append(cur_layer)
             self.SA_layer_names.append(src_name)
-
+            # => 输出通道会cat所有特征层的SA特征，而SA特征又是其每层mlp的cat
+            # => c表示channel
             c_in += sum([x[-1] for x in mlps])
 
         if 'bev' in self.model_cfg.FEATURES_SOURCE:
@@ -81,7 +88,6 @@ class VoxelSetAbstraction(nn.Module):
             mlps = SA_cfg['raw_points'].MLPS
             for k in range(len(mlps)):
                 mlps[k] = [num_rawpoint_features - 3] + mlps[k]
-
             self.SA_rawpoints = pointnet2_stack_modules.StackSAModuleMSG(
                 radii=SA_cfg['raw_points'].POOL_RADIUS,
                 nsamples=SA_cfg['raw_points'].NSAMPLE,
@@ -90,7 +96,7 @@ class VoxelSetAbstraction(nn.Module):
                 pool_method='max_pool'
             )
             c_in += sum([x[-1] for x in mlps])
-
+        # => 特征融合层，将每个SA得到特征cat后的多尺度keypoint-feature进行特征提取,NUM_OUTPUT_FEATURES: 128
         self.vsa_point_feature_fusion = nn.Sequential(
             nn.Linear(c_in, self.model_cfg.NUM_OUTPUT_FEATURES, bias=False),
             nn.BatchNorm1d(self.model_cfg.NUM_OUTPUT_FEATURES),
@@ -100,6 +106,7 @@ class VoxelSetAbstraction(nn.Module):
         self.num_point_features_before_fusion = c_in
 
     def interpolate_from_bev_features(self, keypoints, bev_features, batch_size, bev_stride):
+        # => keypoint:(b,num_keypoints,3)
         x_idxs = (keypoints[:, :, 0] - self.point_cloud_range[0]) / self.voxel_size[0]
         y_idxs = (keypoints[:, :, 1] - self.point_cloud_range[1]) / self.voxel_size[1]
         x_idxs = x_idxs / bev_stride
@@ -119,7 +126,7 @@ class VoxelSetAbstraction(nn.Module):
     def get_sampled_points(self, batch_dict):
         batch_size = batch_dict['batch_size']
         if self.model_cfg.POINT_SOURCE == 'raw_points':
-            src_points = batch_dict['points'][:, 1:4]
+            src_points = batch_dict['points'][:, 1:4]  # => [:,(x,y,z)]
             batch_indices = batch_dict['points'][:, 0].long()
         elif self.model_cfg.POINT_SOURCE == 'voxel_centers':
             src_points = common_utils.get_voxel_centers(
@@ -178,6 +185,7 @@ class VoxelSetAbstraction(nn.Module):
 
         point_features_list = []
         if 'bev' in self.model_cfg.FEATURES_SOURCE:
+            # => [B,num_keypoints,bev_featrue_dim]
             point_bev_features = self.interpolate_from_bev_features(
                 keypoints, batch_dict['spatial_features'], batch_dict['batch_size'],
                 bev_stride=batch_dict['spatial_features_stride']
@@ -193,6 +201,7 @@ class VoxelSetAbstraction(nn.Module):
             xyz = raw_points[:, 1:4]
             xyz_batch_cnt = xyz.new_zeros(batch_size).int()
             for bs_idx in range(batch_size):
+                # batch中每个原始点云的个数。
                 xyz_batch_cnt[bs_idx] = (raw_points[:, 0] == bs_idx).sum()
             point_features = raw_points[:, 4:].contiguous() if raw_points.shape[1] > 4 else None
 
@@ -206,7 +215,9 @@ class VoxelSetAbstraction(nn.Module):
             point_features_list.append(pooled_features.view(batch_size, num_keypoints, -1))
 
         for k, src_name in enumerate(self.SA_layer_names):
+            # => 稀疏格式的体素坐标（只有非空体素）
             cur_coords = batch_dict['multi_scale_3d_features'][src_name].indices
+            # => 计算第i个spconv feature map非空体素中心坐标作为输入点集xyz
             xyz = common_utils.get_voxel_centers(
                 cur_coords[:, 1:4],
                 downsample_times=self.downsample_times_map[src_name],
@@ -216,7 +227,8 @@ class VoxelSetAbstraction(nn.Module):
             xyz_batch_cnt = xyz.new_zeros(batch_size).int()
             for bs_idx in range(batch_size):
                 xyz_batch_cnt[bs_idx] = (cur_coords[:, 0] == bs_idx).sum()
-
+            # => 计算第i层spconv feature map的MSG SA pointnet 特征.
+            # => 这里是对每层spconv feature map 进行SA，而不是对1个spconv feature map进行多层SA，因此不用到SA的输出点集合
             pooled_points, pooled_features = self.SA_layers[k](
                 xyz=xyz.contiguous(),
                 xyz_batch_cnt=xyz_batch_cnt,
